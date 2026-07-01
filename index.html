@@ -834,6 +834,8 @@ async function initApp(){
   checkNotifs();
   startClock();
   setInterval(checkNotifs,60000);
+  // Sauvegarde automatique toutes les heures
+  setInterval(()=>{saveToSupabase();showToast('💾 Sauvegarde auto effectuée');},3600000);
 }
 
 function startClock(){
