@@ -607,15 +607,8 @@ function saveDB(){
   if(navigator.onLine){
     saveToSupabase();
   } else {
-    // Marquer comme en attente de sync
-    let pending=JSON.parse(localStorage.getItem('pendingSync')||'false');
     localStorage.setItem('pendingSync','true');
     updateConnStatus();
-
-// ============================================================
-// RESTAURATION SESSION APRÈS ACTUALISATION
-// ============================================================
-
   }
 }
 
@@ -782,7 +775,7 @@ function doLogout(){
   document.getElementById('loginScreen').classList.add('show');
   document.getElementById('loginPhone').value='';
   document.getElementById('loginPass').value='';
-  document.getElementById('loginError').style.display='none';
+  const _lerr=document.getElementById('loginError');if(_lerr)_lerr.style.display='none';
   // 5. Fermer le panneau notif
   const np=document.getElementById('notifPanel');
   if(np) np.style.display='none';
@@ -1045,14 +1038,23 @@ function renderDashboard(){
       ${myTx.length===0?`<div class="empty-state"><div class="es-icon">💳</div><p>Aucune opération aujourd'hui</p></div>`:
         myTx.slice(-6).reverse().map(t=>txRow(t,isAdmin)).join('')}
     </div>
-    ${currentUser.role==='agent'?`<div style="margin-top:4px">
-      <div class="op-grid">
+    ${currentUser.role==='agent'?`
+      <div class="op-grid" style="margin-top:4px">
         <div class="op-card oc-red" onclick="showPage('operation');setTimeout(()=>setOpType('retrait'),100)"><div class="oc-icon">📤</div><div class="oc-title">Retrait</div><div class="oc-sub">Liquidité ↓</div></div>
         <div class="op-card oc-green" onclick="showPage('operation');setTimeout(()=>setOpType('depot'),100)"><div class="oc-icon">📥</div><div class="oc-title">Dépôt</div><div class="oc-sub">Liquidité ↑</div></div>
         <div class="op-card oc-orange" onclick="showPage('operation');setTimeout(()=>setOpType('depense'),100)"><div class="oc-icon">🛒</div><div class="oc-title">Dépense</div><div class="oc-sub">Charges</div></div>
-        <div class="op-card oc-blue" onclick="showPage('operation');setTimeout(()=>setOpType('credit'),100)"><div class="oc-icon">📱</div><div class="oc-title">Crédit comm.</div><div class="oc-sub">Liquidité ↑</div></div>
+        <div class="op-card oc-blue" onclick="showPage('operation');setTimeout(()=>setOpType('credit'),100)"><div class="oc-icon">📱</div><div class="oc-title">Crédit</div><div class="oc-sub">Liquidité ↑</div></div>
+        <div class="op-card oc-purple" onclick="showPage('operation');setTimeout(()=>setOpType('vente'),100)"><div class="oc-icon">🖨️</div><div class="oc-title">Vente</div><div class="oc-sub">Services</div></div>
       </div>
-    </div>`:''}
+      <div class="card" style="margin-top:8px">
+        <div class="card-header">
+          <div class="card-title">Mes opérations du jour</div>
+          <button class="btn-ghost btn btn-sm" onclick="showPage('historique')">Tout voir</button>
+        </div>
+        ${myTx.length===0?'<div class="empty-state"><div class="es-icon">💳</div><p>Aucune opération aujourd\'hui</p></div>':
+          myTx.slice().reverse().map(t=>txRow(t,false,false)).join('')}
+        ${myTx.length>0?'<button class="btn btn-outline btn-full" style="margin-top:8px" onclick="showPage(\'demandes\')">✏️ Signaler une erreur</button>':''}
+      </div>`:''}
   `;
 }
 
@@ -1124,25 +1126,31 @@ function setOpType(type){
 // ============================================================
 // VENTE MATERIEL / SERVICES
 // ============================================================
-const SERVICES_DEFAUT=[
-  {id:'svc_env',nom:'Enveloppe',prix:100,unite:'pièce',icon:'✉️'},
-  {id:'svc_sco',nom:'Scotch',prix:150,unite:'rouleau',icon:'🧻'},
-  {id:'svc_pnb',nom:'Photocopie N&B',prix:75,unite:'page',icon:'🖨️'},
-  {id:'svc_pcoul',nom:'Impression Couleur',prix:200,unite:'page',icon:'🎨'},
-  {id:'svc_pnb2',nom:'Impression N&B',prix:100,unite:'page',icon:'📄'},
-  {id:'svc_wifi',nom:'WiFi Zone',prix:500,unite:'session',icon:'📶'},
-  {id:'svc_sou',nom:'Souris',prix:2000,unite:'pièce',icon:'🖱️'},
-  {id:'svc_clav',nom:'Clavier',prix:3000,unite:'pièce',icon:'⌨️'},
-  {id:'svc_cab',nom:'Câble USB',prix:500,unite:'pièce',icon:'🔌'},
-];
+const SERVICES_DEFAUT=[];  // Vide par défaut — l'admin doit configurer les prix
 
 function getServices(){
   db=loadDB();
-  return db.services||SERVICES_DEFAUT;
+  return db.services||[];
 }
 
 function renderVenteForm(){
+  db=loadDB();
   const services=getServices();
+  if(services.length===0){
+    document.getElementById('opFormArea').innerHTML=`
+      <div class="form-panel">
+        <div class="form-panel-header">
+          <div class="form-panel-title">🖨️ Vente / Service</div>
+          <button class="btn-ghost btn btn-sm" onclick="document.getElementById('opFormArea').innerHTML=''">✕</button>
+        </div>
+        <div class="empty-state">
+          <div class="es-icon">⚙️</div>
+          <p>Aucun service configuré.</p>
+          <p style="font-size:12px;color:var(--gray2);margin-top:8px">L'administrateur doit d'abord configurer les services et leurs prix dans <strong>Paramètres → Gestion des services & prix</strong></p>
+        </div>
+      </div>`;
+    return;
+  }
   let items=services.map(s=>`
     <div class="vente-item" id="vi_${s.id}" style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(255,255,255,.04);border-radius:10px;margin-bottom:8px">
       <span style="font-size:22px">${s.icon}</span>
@@ -1195,31 +1203,46 @@ function changeQty(id,delta){
 
 function doVente(){
   db=loadDB();
-  const ag=db.agences.find(a=>a.id===currentUser.agenceId);
-  if(!ag){showToast('❌ Agence introuvable');return;}
+  // Trouver l'index de l'agence (pas juste la référence)
+  const agIdx=db.agences.findIndex(a=>a.id===currentUser.agenceId);
+  if(agIdx===-1){showToast('❌ Agence introuvable');return;}
   const services=getServices();
+  if(services.length===0){showToast('❌ Aucun service configuré par l\'admin');return;}
   const note=document.getElementById('venteNote')?.value||'';
   let total=0;
   const detail=[];
-  services.forEach(s=>{
+  services.forEach(function(s){
     const qty=(window._venteQty||{})[s.id]||0;
-    if(qty>0){ total+=qty*s.prix; detail.push(`${s.icon}${s.nom}×${qty}`); }
+    if(qty>0){
+      total+=qty*s.prix;
+      detail.push(s.icon+' '+s.nom+' x'+qty+' = '+fmtM(qty*s.prix)+' FCFA');
+    }
   });
   if(total<=0){showToast('⚠️ Sélectionnez au moins un article');return;}
-  // Ajouter à la liquidité
-  ag.liquidite+=total;
-  const desc='Vente: '+detail.join(', ');
+  // Modifier directement dans db.agences[agIdx]
+  const liqAvant=db.agences[agIdx].liquidite;
+  db.agences[agIdx].liquidite=liqAvant+total;
+  const desc='🖨️ Vente: '+detail.join(', ');
   db.transactions.push({
-    id:uid(),ts:new Date().toISOString(),
-    type:'vente',agenceId:ag.id,agentId:currentUser.id,
-    produitId:null,amount:total,effect:1,
-    desc,note,liqAfter:ag.liquidite,
-    venteDetail:detail
+    id:uid(),
+    ts:new Date().toISOString(),
+    type:'vente',
+    agenceId:db.agences[agIdx].id,
+    agentId:currentUser.id,
+    produitId:null,
+    amount:total,
+    effect:1,
+    desc:desc,
+    note:note,
+    liqAvant:liqAvant,
+    liqAfter:db.agences[agIdx].liquidite
   });
+  // Mettre à jour currentAgence
+  currentAgence=db.agences[agIdx];
   saveDB();
-  logActivity('vente',desc+' — '+fmtM(total)+' FCFA');
-  currentAgence=ag;
-  showToast('✅ Vente encaissée: +'+fmtM(total)+' FCFA');
+  logActivity('vente',desc+' — +'+fmtM(total)+' FCFA');
+  showToast('✅ +'+fmtM(total)+' FCFA ajoutés à la liquidité !');
+  window._venteQty={};
   document.getElementById('opFormArea').innerHTML='';
   showPage('dashboard');
 }
@@ -1810,7 +1833,7 @@ function toggleAgent(id){const u=db.users.find(x=>x.id===id);u.active=!u.active;
 function renderProduits(){
   db=loadDB();
   const cats={mobile_money:'Mobile Money',transfert_intl:'Transfert international',autre:'Autre'};
-  let html=`<button class="btn btn-red btn-full" onclick="prodImgB64=null;document.getElementById('pr_name').value='';document.getElementById('pr_img_prev').style.display='none';document.getElementById('pr_img_ph').style.display='block';openModal('mProduit')" style="margin-bottom:12px">+ Nouveau produit</button>`;
+  let html=`<button class="btn btn-red btn-full" onclick="prodImgBase64=null;document.getElementById('pr_name').value='';document.getElementById('pr_abbr').value='';document.getElementById('pr_img_preview').style.display='none';document.getElementById('pr_img_placeholder').style.display='block';openModal('modalProduit')" style="margin-bottom:12px">+ Nouveau produit</button>`;
   for(const [catKey,catName] of Object.entries(cats)){
     const ps=db.produits.filter(p=>p.cat===catKey);if(!ps.length) continue;
     html+=`<div class="section-label">${catName}</div>`;
@@ -1917,59 +1940,15 @@ function doSearch(){
 // ============================================================
 // NOTIFICATIONS INTERNES
 // ============================================================
-function addNotification(userId, type, message, icon='🔔'){
-  db=loadDB();
-  db.notifications=db.notifications||[];
-  db.notifications.push({
-    id:uid(), userId, type, message, icon,
-    ts:new Date().toISOString(), read:false
-  });
-  // Garder max 200 notifications
-  if(db.notifications.length>200) db.notifications=db.notifications.slice(-200);
-  saveDB();
-  updateNotifBadge();
-}
 
-function updateNotifBadge(){
-  const count=(db.notifications||[]).filter(n=>n.userId===currentUser?.id&&!n.read).length;
-  const badge=document.getElementById('notifBadge');
-  if(badge){ badge.textContent=count||''; badge.style.display=count>0?'flex':'none'; }
-}
 
-function markNotifsRead(){
-  db=loadDB();
-  (db.notifications||[]).filter(n=>n.userId===currentUser?.id&&!n.read).forEach(n=>n.read=true);
-  saveDB();
-  updateNotifBadge();
-}
 
-function renderNotifications(){
-  const notifs=(db.notifications||[]).filter(n=>n.userId===currentUser?.id).slice().reverse().slice(0,50);
-  const panel=document.getElementById('notifPanel');
-  if(!panel) return;
-  panel.innerHTML=`
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.07)">
-      <strong style="font-size:14px">🔔 Notifications</strong>
-      <button onclick="markNotifsRead();renderNotifications()" style="background:none;border:none;color:var(--red);font-size:12px;cursor:pointer">Tout marquer lu</button>
-    </div>
-    ${notifs.length===0?'<div style="padding:24px;text-align:center;color:var(--gray2);font-size:13px">Aucune notification</div>':
-      notifs.map(n=>`<div onclick="markNotifsRead()" style="padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.04);display:flex;gap:10px;align-items:flex-start;background:${n.read?'transparent':'rgba(220,38,38,.05)'}">
-        <span style="font-size:20px">${n.icon}</span>
-        <div>
-          <div style="font-size:13px;color:${n.read?'var(--gray2)':'var(--text1)'}">${n.message}</div>
-          <div style="font-size:10px;color:var(--gray2);margin-top:3px">${fmtDs(n.ts)}</div>
-        </div>
-      </div>`).join('')}
-  `;
-}
 
-function toggleNotifPanel(){
-  const panel=document.getElementById('notifPanel');
-  if(!panel) return;
-  const isOpen=panel.style.display==='block';
-  panel.style.display=isOpen?'none':'block';
-  if(!isOpen){ markNotifsRead(); renderNotifications(); }
-}
+
+
+
+
+
 
 // ===================== JOURNAL D'ACTIVITÉ =====================
 function renderJournal(){
@@ -2216,7 +2195,7 @@ function renderAlertes(){
         <div style="flex:1"><div>${a.message}</div><div style="font-size:10px;opacity:.6;margin-top:2px">${fmtDs(a.ts)}</div></div>
         ${!a.vue?`<button class="btn btn-xs btn-ghost" onclick="marquerVue('${a.id}')">Lu</button>`:''}
       </div>`).join('');
-  document.getElementById('nb-alertes') && (document.getElementById('nb-alertes').style.display='none');
+  const _nbal=document.getElementById('nb-alertes');if(_nbal)_nbal.style.display='none';
 }
 function marquerVue(id){const a=db.alertes.find(x=>x.id===id);if(a)a.vue=true;saveDB();renderAlertes();}
 function marquerAlerteVue(id){db=loadDB();const a=db.alertes.find(x=>x.id===id);if(a){a.vue=true;saveDB();}renderDashboard();}
@@ -2320,75 +2299,158 @@ function shareRapport(){
 
 // ===================== CONFIG =====================
 function renderConfig(){
+  db=loadDB();
   const isAdmin=currentUser.role==='admin';
-  let html=`<div class="card">
-    <div class="card-title">Mon profil</div>
-    <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.06)"><span style="color:var(--gray2)">Nom</span><strong>${currentUser.name}</strong></div>
-    <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.06)"><span style="color:var(--gray2)">Numéro</span><strong>${currentUser.phone}</strong></div>
-    <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px"><span style="color:var(--gray2)">Rôle</span><span class="role-badge role-${currentUser.role}">${currentUser.role}</span></div>
-  </div>`;
+  let html='';
+
+  // Profil
+  html+='<div class="card">';
+  html+='<div class="card-title">Mon profil</div>';
+  html+='<div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.06)"><span style="color:var(--gray2)">Nom</span><strong>'+currentUser.name+'</strong></div>';
+  html+='<div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.06)"><span style="color:var(--gray2)">Numéro</span><strong>'+currentUser.phone+'</strong></div>';
+  html+='<div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px"><span style="color:var(--gray2)">Rôle</span><span class="role-badge role-'+currentUser.role+'">'+currentUser.role+'</span></div>';
+  html+='</div>';
+
+  // Mot de passe
   if(isAdmin){
-    html+=`<div class="card" style="margin-top:10px">
-      <div class="card-title">Changer mon mot de passe admin</div>
-      <div class="form-group"><label>Nouveau mot de passe</label><input id="cfgPass" type="password" placeholder="••••••••"></div>
-      <div class="form-group"><label>Confirmer</label><input id="cfgPass2" type="password" placeholder="••••••••"></div>
-      <button class="btn btn-red btn-full" onclick="saveConfig()">Enregistrer</button>
-    </div>`;
+    html+='<div class="card" style="margin-top:10px">';
+    html+='<div class="card-title">Changer mon mot de passe admin</div>';
+    html+='<div class="form-group"><label>Nouveau mot de passe</label><input id="cfgPass" type="password" placeholder="••••••••"></div>';
+    html+='<div class="form-group"><label>Confirmer</label><input id="cfgPass2" type="password" placeholder="••••••••"></div>';
+    html+='<button class="btn btn-red btn-full" onclick="saveConfig()">Enregistrer</button>';
+    html+='</div>';
   } else {
-    html+=`<div class="alert al-yellow" style="margin-top:10px"><span>🔒</span><span>Seul l'administrateur peut modifier les mots de passe. Contactez l'admin pour changer le vôtre.</span></div>`;
+    html+='<div class="alert al-yellow" style="margin-top:10px"><span>🔒</span><span>Seul l\'administrateur peut modifier les mots de passe.</span></div>';
   }
-  html+=`<div class="card" style="margin-top:10px">
-    <div class="card-title">Application</div>
-    <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.04)"><span>Version</span><span style="color:var(--gray2)">2.0.0</span></div>
-    <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.04)"><span>Utilisateurs</span><span style="color:var(--gray2)">${db.users.length}</span></div>
-    <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px"><span>Transactions</span><span style="color:var(--gray2)">${db.transactions.length}</span></div>
-  </div>`;
+
+  // Infos app
+  html+='<div class="card" style="margin-top:10px">';
+  html+='<div class="card-title">Application</div>';
+  html+='<div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.04)"><span>Version</span><span style="color:var(--gray2)">3.0.0</span></div>';
+  html+='<div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.04)"><span>Utilisateurs</span><span style="color:var(--gray2)">'+db.users.length+'</span></div>';
+  html+='<div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px"><span>Transactions</span><span style="color:var(--gray2)">'+db.transactions.length+'</span></div>';
+  html+='</div>';
+
+  // Services & Prix (admin seulement)
   if(isAdmin){
     const svcs=getServices();
-    html+=`<div class="card" style="margin-top:10px">
-      <div class="card-title">🖨️ Gestion des services & prix</div>
-      <p style="font-size:12px;color:var(--gray2);margin-bottom:12px">Définissez vos services et leurs prix. L'agent verra ces prix lors d'une vente.</p>
-      <div id="svcList">
-        ${svcs.map((s,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)">
-          <span style="font-size:18px">${s.icon}</span>
-          <div style="flex:1">
-            <input value="${s.nom}" onchange="updateSvc(${i},'nom',this.value)" style="background:transparent;border:none;color:var(--text1);font-size:13px;font-weight:600;width:100%">
-          </div>
-          <input type="number" value="${s.prix}" onchange="updateSvc(${i},'prix',this.value)" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--text1);font-size:13px;width:80px;padding:4px 8px;text-align:right">
-          <span style="font-size:11px;color:var(--gray2)">FCFA</span>
-          <button onclick="deleteSvc(${i})" style="background:none;border:none;color:#ef4444;font-size:16px;cursor:pointer">🗑️</button>
-        </div>`).join('')}
-      </div>
-      <button class="btn btn-outline btn-full" style="margin-top:10px" onclick="addSvc()">+ Ajouter un service</button>
-      <button class="btn btn-red btn-full" style="margin-top:8px" onclick="saveSvcs()">✅ Enregistrer les prix</button>
-    </div>`;
+    html+='<div class="card" style="margin-top:10px">';
+    html+='<div class="card-title">🖨️ Gestion des services & prix</div>';
+    html+='<p style="font-size:12px;color:var(--gray2);margin-bottom:10px">C\'est vous l\'admin qui définissez les services et leurs prix. L\'agent ne peut pas vendre sans configuration.</p>';
+
+    // Boutons rapides si aucun service
+    if(svcs.length===0){
+      html+='<div style="background:rgba(220,38,38,.08);border:1px dashed rgba(220,38,38,.3);border-radius:10px;padding:14px;text-align:center;margin-bottom:10px">';
+      html+='<div style="font-size:24px;margin-bottom:6px">⚙️</div>';
+      html+='<div style="font-size:13px;font-weight:600;margin-bottom:4px">Aucun service configuré</div>';
+      html+='<div style="font-size:12px;color:var(--gray2)">Cliquez sur un service pour l\'ajouter</div>';
+      html+='</div>';
+    }
+
+    // Boutons d'ajout rapide toujours visibles
+    html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">';
+    const rapides=[
+      ['✉️','Enveloppe',100,'pièce'],
+      ['🧻','Scotch',150,'rouleau'],
+      ['🖨️','Photocopie N&B',75,'page'],
+      ['🎨','Impression Couleur',200,'page'],
+      ['📄','Impression N&B',100,'page'],
+      ['📶','WiFi Zone',500,'session'],
+      ['🖱️','Souris',2000,'pièce'],
+      ['⌨️','Clavier',3000,'pièce'],
+      ['🔌','Câble USB',500,'pièce'],
+      ['💾','Clé USB',1000,'pièce'],
+    ];
+    rapides.forEach(function(r){
+      const deja=svcs.find(function(s){return s.nom===r[1];});
+      if(!deja){
+        html+='<button onclick="addSvcRapide(\''+r[0]+'\',\''+r[1]+'\','+r[2]+',\''+r[3]+'\')" class="btn btn-outline btn-sm" style="width:auto;font-size:11px">+ '+r[1]+'</button>';
+      }
+    });
+    html+='</div>';
+
+    // Liste des services configurés
+    if(svcs.length>0){
+      html+='<div id="svcList">';
+      svcs.forEach(function(s,i){
+        html+='<div class="svc-row" style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)">';
+        html+='<span style="font-size:20px">'+s.icon+'</span>';
+        html+='<div style="flex:1"><input class="svc-nom" data-idx="'+i+'" value="'+s.nom+'" onchange="updateSvc('+i+',\'nom\',this.value)" style="background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,.1);color:var(--text1);font-size:13px;font-weight:600;width:100%;padding-bottom:2px"></div>';
+        html+='<input class="svc-prix" data-idx="'+i+'" type="number" value="'+s.prix+'" onchange="updateSvc('+i+',\'prix\',this.value)" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--text1);font-size:13px;width:90px;padding:6px 8px;text-align:right">';
+        html+='<span style="font-size:11px;color:var(--gray2)">FCFA</span>';
+        html+='<button onclick="deleteSvc('+i+')" style="background:none;border:none;color:#ef4444;font-size:18px;cursor:pointer;padding:4px">🗑️</button>';
+        html+='</div>';
+      });
+      html+='</div>';
+      html+='<button class="btn btn-red btn-full" style="margin-top:10px" onclick="saveSvcs()">✅ Enregistrer tous les prix</button>';
+    }
+
+    html+='<button class="btn btn-outline btn-full" style="margin-top:8px" onclick="addSvc()">+ Ajouter un service personnalisé</button>';
+    html+='</div>';
   }
+
   document.getElementById('page-config').innerHTML=html;
 }
 
-function updateSvc(i,field,val){
-  const svcs=getServices();
-  svcs[i][field]=field==='prix'?parseInt(val)||0:val;
-  window._tempSvcs=svcs;
-}
-function deleteSvc(i){
-  const svcs=getServices();
-  svcs.splice(i,1);
-  db=loadDB();db.services=svcs;saveDB();
+
+
+function addSvcRapide(icon,nom,prix,unite){
+  db=loadDB();
+  db.services=db.services||[];
+  if(db.services.find(function(s){return s.nom===nom;})){
+    showToast('⚠️ '+nom+' déjà ajouté');return;
+  }
+  db.services.push({id:'svc_'+uid(),nom:nom,prix:prix,unite:unite,icon:icon});
+  saveDB();
+  showToast('✅ '+nom+' ajouté');
   renderConfig();
 }
+
 function addSvc(){
-  const svcs=getServices();
-  svcs.push({id:'svc_'+uid(),nom:'Nouveau service',prix:100,unite:'pièce',icon:'📦'});
-  db=loadDB();db.services=svcs;saveDB();
+  db=loadDB();
+  db.services=db.services||[];
+  db.services.push({id:'svc_'+uid(),nom:'Nouveau service',prix:100,unite:'pièce',icon:'📦'});
+  saveDB();
   renderConfig();
 }
+
+function updateSvc(i,field,val){
+  db=loadDB();
+  db.services=db.services||[];
+  if(!db.services[i]) return;
+  if(field==='prix') db.services[i].prix=parseInt(val)||0;
+  else db.services[i][field]=val;
+  saveDB();
+}
+
+function deleteSvc(i){
+  db=loadDB();
+  db.services=db.services||[];
+  db.services.splice(i,1);
+  saveDB();
+  showToast('🗑️ Service supprimé');
+  renderConfig();
+}
+
 function saveSvcs(){
-  const svcs=window._tempSvcs||getServices();
-  db=loadDB();db.services=svcs;saveDB();
-  showToast('✅ Prix enregistrés');
-  renderConfig();
+  db=loadDB();
+  db.services=db.services||[];
+  // Lire tous les champs visibles
+  var rows=document.querySelectorAll('.svc-row');
+  rows.forEach(function(row,i){
+    var nomEl=row.querySelector('.svc-nom');
+    var prixEl=row.querySelector('.svc-prix');
+    if(db.services[i]){
+      if(nomEl) db.services[i].nom=nomEl.value||db.services[i].nom;
+      if(prixEl) db.services[i].prix=parseInt(prixEl.value)||0;
+    }
+  });
+  saveDB();
+  showToast('✅ Prix enregistrés avec succès !');
+  // Forcer rechargement de la page config
+  setTimeout(function(){ showPage('config'); }, 300);
 }
+
 function saveConfig(){
   if(currentUser.role!=='admin'){showToast('⛔ Accès refusé');return}
   const u=db.users.find(x=>x.id===currentUser.id);
@@ -2407,75 +2469,144 @@ function saveConfig(){
 // ===================== DEMANDES MODIFICATION =====================
 let pendingDemandeData = {};
 function openDemandeModal(txId){
-  const t=db.transactions.find(x=>x.id===txId);if(!t) return;
+  db=loadDB();
+  const t=db.transactions.find(x=>x.id===txId);
+  if(!t){showToast('❌ Transaction introuvable');return;}
+
+  // Supprimer si déjà ouvert
   const existing=document.getElementById('demandeInline_'+txId);
   if(existing){existing.remove();return;}
-  const div=document.createElement('div');div.id='demandeInline_'+txId;
-  div.style.cssText='background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);border-radius:10px;padding:14px;margin-top:8px;';
-  div.innerHTML=`
-    <div style="font-size:13px;font-weight:700;margin-bottom:10px;color:#fca5a5">📝 Demande de correction</div>
-    <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:8px;margin-bottom:10px;font-size:12px">
-      <div style="color:var(--gray2)">Transaction:</div>
-      <div style="font-weight:600">${t.desc} — ${fmtM(t.amount)} FCFA</div>
-      <div style="color:var(--gray2);font-size:11px">${fmtDs(t.ts)}</div>
-    </div>
-    <div class="form-group"><label>Nouveau montant (FCFA)</label>
-      <input type="number" id="dmt_${txId}" value="${t.amount}" inputmode="numeric">
-    </div>
-    <div class="form-group"><label>💬 Votre commentaire (obligatoire)</label>
-      <textarea id="dcmt_${txId}" rows="3" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px;color:white;font-size:13px;resize:none" placeholder="Expliquez pourquoi vous demandez cette correction..."></textarea>
-    </div>
-    <div class="form-group"><label>📸 Capture d'écran (optionnel)</label>
-      <input type="file" id="dcap_${txId}" accept="image/*" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px;color:white;font-size:12px;width:100%">
-      <div id="dcap_preview_${txId}" style="margin-top:6px"></div>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-danger" onclick="submitDemande('${txId}')">📤 Envoyer</button>
-      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('demandeInline_${txId}').remove()">Annuler</button>
-    </div>`;
-  setTimeout(()=>{
+
+  // Créer le formulaire
+  const div=document.createElement('div');
+  div.id='demandeInline_'+txId;
+  div.style.cssText='background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.3);border-radius:10px;padding:14px;margin-top:8px;margin-bottom:8px;';
+  div.innerHTML=
+    '<div style="font-size:13px;font-weight:700;margin-bottom:10px;color:#fca5a5">📝 Demande de correction</div>'+
+    '<div style="background:rgba(255,255,255,.05);border-radius:8px;padding:8px;margin-bottom:10px;font-size:12px">'+
+      '<div style="color:var(--gray2)">Transaction concernée:</div>'+
+      '<div style="font-weight:600;margin-top:2px">'+t.desc+' — '+fmtM(t.amount)+' FCFA</div>'+
+      '<div style="color:var(--gray2);font-size:11px">'+fmtDs(t.ts)+'</div>'+
+    '</div>'+
+    '<div class="form-group"><label>Nouveau montant correct (FCFA)</label>'+
+      '<input type="number" id="dmt_'+txId+'" value="'+t.amount+'" inputmode="numeric" style="font-size:16px">'+
+    '</div>'+
+    '<div class="form-group"><label>💬 Votre commentaire (obligatoire)</label>'+
+      '<textarea id="dcmt_'+txId+'" rows="3" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:10px;color:white;font-size:13px;resize:none;font-family:inherit" placeholder="Ex: J\'ai saisi 5000 au lieu de 50000..."></textarea>'+
+    '</div>'+
+    '<div class="form-group"><label>📸 Capture d\'écran (optionnel)</label>'+
+      '<input type="file" id="dcap_'+txId+'" accept="image/*" style="width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:8px;color:white;font-size:12px">'+
+      '<div id="dcap_preview_'+txId+'" style="margin-top:6px"></div>'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;margin-top:8px">'+
+      '<button class="btn btn-danger" onclick="submitDemande(\''+txId+'\')">📤 Envoyer la demande</button>'+
+      '<button class="btn btn-outline btn-sm" onclick="document.getElementById(\'demandeInline_'+txId+'\').remove()">Annuler</button>'+
+    '</div>';
+
+  // Preview image
+  setTimeout(function(){
     const inp=document.getElementById('dcap_'+txId);
-    if(inp) inp.addEventListener('change',function(){
-      const file=this.files[0];if(!file)return;
-      const r=new FileReader();r.onload=ev=>{
-        const prev=document.getElementById('dcap_preview_'+txId);
-        if(prev) prev.innerHTML=`<img src="${ev.target.result}" style="width:100%;border-radius:8px;max-height:150px;object-fit:contain">`;
-      };r.readAsDataURL(file);
-    });
-  },100);
-  const txEl=event?.target?.closest('.tx-item');
-  if(txEl) txEl.after(div);
-  else document.querySelector('.card')?.appendChild(div);
+    if(inp){
+      inp.addEventListener('change',function(){
+        const file=this.files[0];
+        if(!file) return;
+        const r=new FileReader();
+        r.onload=function(ev){
+          const prev=document.getElementById('dcap_preview_'+txId);
+          if(prev) prev.innerHTML='<img src="'+ev.target.result+'" style="width:100%;border-radius:8px;max-height:150px;object-fit:contain;margin-top:4px">';
+        };
+        r.readAsDataURL(file);
+      });
+    }
+  },50);
+
+  // Insérer après la transaction dans la page active
+  const txItem=document.getElementById('txi-'+txId);
+  if(txItem){
+    txItem.parentNode.insertBefore(div, txItem.nextSibling);
+  } else {
+    // Fallback — mettre dans la première card visible
+    const activePage=document.querySelector('.page.active');
+    const card=activePage?activePage.querySelector('.card'):null;
+    if(card) card.appendChild(div);
+    else document.body.appendChild(div);
+  }
+
+  // Scroller vers le formulaire
+  setTimeout(function(){div.scrollIntoView({behavior:'smooth',block:'center'});},100);
 }
 
 function submitDemande(txId){
   const commentaire=(document.getElementById('dcmt_'+txId)?.value||'').trim();
-  if(!commentaire){showToast('\u26a0\ufe0f Le commentaire est obligatoire');return;}
+  if(!commentaire){showToast('⚠️ Le commentaire est obligatoire');return;}
   const t=db.transactions.find(x=>x.id===txId);if(!t)return;
   const newAmt=parseInt(document.getElementById('dmt_'+txId)?.value)||t.amount;
   const capFile=document.getElementById('dcap_'+txId)?.files[0];
+
   function saveDemande(capture){
-    db=loadDB();
-    db.demandes=db.demandes||[];
-    db.demandes.push({id:uid(),txId,agentId:currentUser.id,agentName:currentUser.name,
-      agenceId:t.agenceId,agenceName:db.agences.find(a=>a.id===t.agenceId)?.name||'?',
-      txDesc:t.desc,oldAmount:t.amount,newAmount:newAmt,
-      commentaire,capture:capture||null,ts:new Date().toISOString(),status:'pending'});
-    db.alertes=db.alertes||[];
-    db.alertes.push({id:uid(),type:'yellow',icon:'\u270f\ufe0f',
-      message:`${currentUser.name} demande correction: ${t.desc} (${fmtM(t.amount)}\u2192${fmtM(newAmt)} FCFA)`,
-      ts:new Date().toISOString(),vue:false});
-    db.users.filter(u=>(u.role==='admin'||u.role==='superviseur')&&u.active).forEach(u=>{
-      addNotification(u.id,'demande_correction',
-        `\u270f\ufe0f ${currentUser.name} demande une correction: ${t.desc}`,
-        '\u270f\ufe0f');
-    });
-    saveDB();
-    const el=document.getElementById('demandeInline_'+txId);if(el)el.remove();
-    showToast('\ud83d\udce4 Demande envoy\u00e9e \u00e0 l\'admin');updateBadges();
+    try{
+      db=loadDB();
+      db.demandes=db.demandes||[];
+      db.demandes.push({
+        id:uid(),txId,
+        agentId:currentUser.id,agentName:currentUser.name,
+        agenceId:t.agenceId,
+        agenceName:(db.agences.find(a=>a.id===t.agenceId)||{}).name||'?',
+        txDesc:t.desc,oldAmount:t.amount,newAmount:newAmt,
+        commentaire,
+        capture:capture||null,
+        ts:new Date().toISOString(),
+        status:'pending'
+      });
+      db.alertes=db.alertes||[];
+      db.alertes.push({
+        id:uid(),type:'yellow',icon:'✏️',
+        message:currentUser.name+' demande correction: '+t.desc+' ('+fmtM(t.amount)+'→'+fmtM(newAmt)+' FCFA)',
+        ts:new Date().toISOString(),vue:false
+      });
+      db.users.filter(u=>(u.role==='admin'||u.role==='superviseur')&&u.active).forEach(u=>{
+        addNotification(u.id,'demande_correction','✏️ '+currentUser.name+' demande une correction: '+t.desc,'✏️');
+      });
+      saveDB();
+      const el=document.getElementById('demandeInline_'+txId);if(el)el.remove();
+      showToast('📤 Demande envoyée à l\'admin');
+      updateBadges();
+    } catch(err){
+      console.error('Erreur save demande:',err);
+      // Si erreur (ex: localStorage plein à cause image), retry sans image
+      if(capture){
+        showToast('⚠️ Image trop grande — demande envoyée sans capture');
+        saveDemande(null);
+      } else {
+        showToast('❌ Erreur lors de l\'envoi. Réessayez.');
+      }
+    }
   }
-  if(capFile){const r=new FileReader();r.onload=ev=>saveDemande(ev.target.result);r.readAsDataURL(capFile);}
-  else saveDemande(null);
+
+  if(capFile){
+    // Compresser l'image avant sauvegarde
+    const reader=new FileReader();
+    reader.onload=function(ev){
+      const img=new Image();
+      img.onload=function(){
+        const canvas=document.createElement('canvas');
+        // Max 800px largeur
+        const maxW=800;
+        let w=img.width, h=img.height;
+        if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+        canvas.width=w;canvas.height=h;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(img,0,0,w,h);
+        // Qualité 0.6 = bonne compression
+        const compressed=canvas.toDataURL('image/jpeg',0.6);
+        saveDemande(compressed);
+      };
+      img.src=ev.target.result;
+    };
+    reader.readAsDataURL(capFile);
+  } else {
+    saveDemande(null);
+  }
 }
 
 
@@ -2610,7 +2741,7 @@ function txRow(t,showAgence=false,showEdit=false){
   const img=pr?db.produitImgs?.[pr.id]:null;
   const agN=showAgence?db.agences.find(a=>a.id===t.agenceId)?.name||'?':'';
   const agtN=db.users.find(u=>u.id===t.agentId)?.name||'';
-  return `<div class="tx-item">
+  return `<div class="tx-item" id="txi-${t.id}">
     <div class="tx-icon-wrap" style="background:${(cols[t.type]||'#333')}1a">
       ${img?`<img src="${img}" style="width:22px;height:22px;border-radius:4px;object-fit:contain">`:
         (icons[t.type]||'💳')}
@@ -2622,7 +2753,8 @@ function txRow(t,showAgence=false,showEdit=false){
     <div class="tx-right">
       <div class="tx-amount ${t.effect>0?'pos':'neg'}">${t.effect>0?'+':'-'}${fmtM(t.amount)}</div>
       ${showEdit?`<div class="btn-icon" style="width:24px;height:24px;font-size:12px;margin-top:3px;margin-left:auto" onclick="openEditTx('${t.id}')">✏️</div>`:''}
-      ${currentUser&&currentUser.role==='admin'&&!showEdit?`<button onclick="openCorrectTx('${t.id}')" style="background:none;border:1px solid rgba(255,255,255,.15);color:var(--gray2);border-radius:6px;padding:2px 6px;font-size:10px;cursor:pointer;margin-top:3px">✏️</button>`:''}
+      ${currentUser&&currentUser.role==='admin'&&!showEdit?`<button onclick="openCorrectTx('${t.id}')" style="background:none;border:1px solid rgba(255,255,255,.15);color:var(--gray2);border-radius:6px;padding:2px 6px;font-size:10px;cursor:pointer;margin-top:3px">✏️ Corriger</button>`:''}
+      ${currentUser&&currentUser.role==='agent'&&!showEdit?`<button data-demande="${t.id}" style="background:none;border:1px solid rgba(255,165,0,.4);color:#fbbf24;border-radius:6px;padding:2px 6px;font-size:10px;cursor:pointer;margin-top:3px;font-family:inherit">✏️ Signaler</button>`:''}
     </div>
   </div>`;
 }
@@ -2672,34 +2804,7 @@ function openCorrectTx(id){
 }
 
 // CORRECTION ENVOI ADMIN (déjà existant mais amélioré)
-function openCorrectionEnvoi(id){
-  db=loadDB();
-  const e=db.envoisAdmin.find(x=>x.id===id);
-  if(!e) return;
-  const newMontant=prompt(`Corriger l'envoi — Montant actuel: ${fmtM(e.montant)} FCFA\nNouveau montant:`);
-  if(!newMontant||isNaN(parseFloat(newMontant))||parseFloat(newMontant)<=0) return;
-  const diff=parseFloat(newMontant)-e.montant;
-  const agent=db.users.find(u=>u.id===e.agentId);
-  const agence=db.agences.find(a=>a.id===(agent||{}).agenceId);
-  if(agence){
-    if(e.type==='liquidite') agence.liquidite=(agence.liquidite||0)+diff;
-    else if(e.type==='virtuel'&&e.produitId){
-      agence.virtuel=agence.virtuel||{};
-      agence.virtuel[e.produitId]=(agence.virtuel[e.produitId]||0)+diff;
-    }
-  }
-  const oldMontant=e.montant;
-  e.montantOriginal=oldMontant;
-  e.montant=parseFloat(newMontant);
-  e.corrected=true;
-  e.correctionAt=new Date().toISOString();
-  // Notifier l'agent
-  if(e.agentId) addNotification(e.agentId,'correction_envoi',
-    `✏️ Envoi corrigé par admin: ${fmtM(oldMontant)}→${fmtM(e.montant)} FCFA`,'✏️');
-  saveDB();
-  showToast('✅ Correction effectuée');
-  renderEnvoi();
-}
+
 
 function saveEditTx(){
   const id=document.getElementById('editTxId').value;const t=db.transactions.find(x=>x.id===id);if(!t) return;
@@ -3061,6 +3166,21 @@ window.addEventListener('offline',()=>{
   showToast('⚠️ Hors ligne — vos opérations seront enregistrées localement');
 });
 updateConnStatus();
+
+// ============================================================
+// DELEGATION EVENEMENTS — gère les clics sur boutons dynamiques
+// ============================================================
+document.addEventListener('click', function(e){
+  // Bouton Signaler (agent)
+  const demandeBtn = e.target.closest('[data-demande]');
+  if(demandeBtn){
+    e.preventDefault();
+    e.stopPropagation();
+    const txId = demandeBtn.getAttribute('data-demande');
+    openDemandeModal(txId);
+    return;
+  }
+});
 
 // ============================================================
 // RESTAURATION SESSION — après tout le JS chargé
