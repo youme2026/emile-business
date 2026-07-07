@@ -20,16 +20,21 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  // Ignorer les extensions et protocoles non-http
+  if (!e.request.url.startsWith('http')) return;
   if (e.request.url.includes('supabase.co')) return;
   if (e.request.url.includes('googleapis.com')) return;
   if (e.request.url.includes('unpkg.com')) return;
+  if (e.request.url.includes('chrome-extension')) return;
 
   e.respondWith(
     caches.match(e.request).then(cached => {
       const fetchPromise = fetch(e.request).then(response => {
         if (response && response.status === 200 && response.type !== 'opaque') {
-          const clone = response.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
+          try {
+            const clone = response.clone();
+            caches.open(CACHE).then(c => c.put(e.request, clone)).catch(()=>{});
+          } catch(err) {}
         }
         return response;
       }).catch(() => cached || new Response('Hors ligne', {status: 503}));
