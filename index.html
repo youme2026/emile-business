@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<meta name="app-version" content="v4.1">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
 <meta name="theme-color" content="#0a0a0f">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2673,7 +2674,8 @@ function dlResumePDF(rid){
   if(!r){showToast('Résumé introuvable','error');return;}
   const ag=db.agences.find(a=>a.id===r.agenceId)||{name:'?'};
   const txs=db.transactions.filter(t=>t.agenceId===r.agenceId&&new Date(t.ts).toDateString()===new Date(r.date).toDateString());
-  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="app-version" content="v4.1"><style>
     body{font-family:Arial,sans-serif;font-size:12px;margin:25px;color:#111}
     .hdr{text-align:center;padding-bottom:12px;margin-bottom:18px;border-bottom:3px solid #dc2626}
     .hdr h1{color:#dc2626;font-size:22px;letter-spacing:3px;margin:0}
@@ -3429,7 +3431,7 @@ function clearAlerts(){db=loadDB();(db.alertes||[]).forEach(a=>a.vue=true);saveD
 
 
 // ============================================================
-// RAPPORT
+// RAPPORT - v2
 // ============================================================
 RENDERS['rapport']=function(){
   if(!currentUser) return;
@@ -3702,7 +3704,8 @@ function dlRapportPDF(period='mois'){
   txs=txs.sort((a,b)=>new Date(b.ts)-new Date(a.ts));
   const e=txs.filter(t=>t.effect>0).reduce((s,t)=>s+t.amount,0);
   const sv=txs.filter(t=>t.effect<0).reduce((s,t)=>s+t.amount,0);
-  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="app-version" content="v4.1"><style>
     body{font-family:Arial,sans-serif;font-size:11px;margin:20px;color:#111}
     .hdr{text-align:center;border-bottom:3px solid #dc2626;padding-bottom:12px;margin-bottom:16px}
     h1{color:#dc2626;font-size:20px;letter-spacing:3px;margin:0}
