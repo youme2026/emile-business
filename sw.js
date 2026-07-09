@@ -1,5 +1,5 @@
 // EMILE BUSINESS GESTION - Service Worker v5
-const CACHE = 'ebg-v5';
+const CACHE = 'ebg-v6-1783615410';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
