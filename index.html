@@ -3642,6 +3642,525 @@ function doLogout(){
 // DOMCONTENTLOADED
 // ============================================================
 
+// ============================================================
+// RÉSUMÉS
+// ============================================================
+function soumettreResume(){
+  if(!currentUser){showToast('Session expirée','error');return;}
+  db=loadDB();
+  const ag=db.agences.find(a=>a.id===currentUser.agenceId);
+  if(!ag){showToast('Agence introuvable','error');return;}
+  const today=new Date().toDateString();
+  // Soumission multiple autorisée - pas de blocage
+  const todayTx=db.transactions.filter(t=>t.agenceId===ag.id&&new Date(t.ts).toDateString()===today);
+  const entrees=todayTx.filter(t=>t.effect>0).reduce((s,t)=>s+t.amount,0);
+  const sorties=todayTx.filter(t=>t.effect<0).reduce((s,t)=>s+t.amount,0);
+  db.resumes=db.resumes||[];
+  db.resumes.push({
+    id:uid(),date:new Date().toISOString(),
+    agenceId:ag.id,agentId:currentUser.id,
+    agentName:currentUser.name,agenceName:ag.name,
+    entrees,sorties,net:entrees-sorties,
+    nbOps:todayTx.length,statut:'pending',
+    liquidite:ag.liquidite,virtuel:{...ag.virtuel}
+  });
+  window._lastOpTime=Date.now();
+  saveDB();
+  showToast('Résumé soumis avec succès','success');
+  RENDERS['resumes']();
+}
+
+function validerResume(id, valide){
+  db=loadDB();
+  const r=(db.resumes||[]).find(x=>x.id===id);
+  if(!r){showToast('Résumé introuvable','error');return;}
+  r.statut=valide?'valide':'rejete';
+  r.validePar=currentUser.name;
+  r.valideAt=new Date().toISOString();
+  addNotif(r.agentId,'resume_'+(valide?'valide':'rejete'),
+    'Résumé '+(valide?'validé':'rejeté')+' par '+currentUser.name,'');
+  saveDB();
+  showToast('Résumé '+(valide?'validé':'rejeté'),'success');
+  RENDERS['validation']();
+}
+
+// ============================================================
+// GESTION AGENTS
+// ============================================================
+function openAgentModal(id=null){
+  const ag=(db.agences||[]).filter(a=>a.active);
+  document.body.insertAdjacentHTML('beforeend',`
+  <div class="modal-overlay show" id="modalAgent" onclick="closeModalOut(event,'modalAgent')">
+    <div class="modal-box">
+      <div class="modal-drag"></div>
+      <div class="modal-title">Nouvel agent</div>
+      <div class="fg"><label>Nom complet</label><input id="ag_name" placeholder="Ex: Sandra Doe"></div>
+      <div class="fg"><label>Téléphone</label><input id="ag_phone" placeholder="Ex: 90123456" type="tel"></div>
+      <div class="fg"><label>Mot de passe</label><input id="ag_pass" type="password" placeholder="8 caractères min"></div>
+      <div class="fg"><label>Rôle</label>
+        <select id="ag_role">
+          <option value="agent">Agent</option>
+          <option value="superviseur">Superviseur</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div class="fg"><label>Agence</label>
+        <select id="ag_agence">
+          ${ag.map(a=>`<option value="${a.id}">${a.name}</option>`).join('')}
+        </select>
+      </div>
+      <button onclick="saveAgent()" class="btn btn-red btn-full mt-10">Enregistrer</button>
+      <button onclick="closeModal('modalAgent')" class="btn btn-outline btn-full mt-10">Annuler</button>
+    </div>
+  </div>`);
+}
+
+async function saveAgent(){
+  const name=(document.getElementById('ag_name')?.value||'').trim();
+  const phone=(document.getElementById('ag_phone')?.value||'').trim();
+  const pass=(document.getElementById('ag_pass')?.value||'').trim();
+  const role=document.getElementById('ag_role')?.value||'agent';
+  const agenceId=document.getElementById('ag_agence')?.value||'';
+  if(!name||!phone||!pass){showToast('Tous les champs sont obligatoires','error');return;}
+  db=loadDB();
+  if(db.users.find(u=>u.phone===phone)){showToast('Ce numéro existe déjà','error');return;}
+  const hashedPass=await hashPass(pass);
+  db.users.push({id:uid(),name,phone,pass:hashedPass,role,agenceId,active:true,createdAt:new Date().toISOString()});
+  saveDB();
+  closeModal('modalAgent');
+  showToast('Agent créé avec succès','success');
+  RENDERS['agents']();
+}
+
+function toggleAgent(userId){
+  db=loadDB();
+  const u=db.users.find(x=>x.id===userId);
+  if(!u)return;
+  u.active=!u.active;
+  saveDB();
+  showToast(u.name+(u.active?' activé':' mis en pause'),'success');
+  RENDERS['agents']();
+}
+
+// ============================================================
+// GESTION AGENCES
+// ============================================================
+function openAgenceModal(id=null){
+  document.body.insertAdjacentHTML('beforeend',`
+  <div class="modal-overlay show" id="modalAgence" onclick="closeModalOut(event,'modalAgence')">
+    <div class="modal-box">
+      <div class="modal-drag"></div>
+      <div class="modal-title">Nouvelle agence</div>
+      <div class="fg"><label>Nom</label><input id="agc_name" placeholder="Ex: Agence Principale"></div>
+      <div class="fg"><label>Adresse</label><input id="agc_addr" placeholder="Ex: Adewi, Lomé"></div>
+      <div class="fg"><label>Couleur</label><input type="color" id="agc_color" value="#f0b90b"></div>
+      <button onclick="saveAgence()" class="btn btn-red btn-full mt-10">Créer</button>
+      <button onclick="closeModal('modalAgence')" class="btn btn-outline btn-full mt-10">Annuler</button>
+    </div>
+  </div>`);
+}
+
+function saveAgence(){
+  const name=(document.getElementById('agc_name')?.value||'').trim();
+  const addr=(document.getElementById('agc_addr')?.value||'').trim();
+  const color=document.getElementById('agc_color')?.value||'#f0b90b';
+  if(!name){showToast('Nom obligatoire','error');return;}
+  db=loadDB();
+  db.agences.push({id:uid(),name,addr,color,active:true,liquidite:0,virtuel:{},creditStock:{}});
+  saveDB();
+  closeModal('modalAgence');
+  showToast('Agence créée','success');
+  RENDERS['agences']();
+}
+
+function toggleAgence(agId){
+  db=loadDB();
+  const ag=db.agences.find(a=>a.id===agId);
+  if(!ag)return;
+  ag.active=!ag.active;
+  saveDB();
+  showToast(ag.name+(ag.active?' activée':' mise en pause'),'success');
+  RENDERS['agences']();
+}
+
+// ============================================================
+// GESTION PRODUITS
+// ============================================================
+function openProduitModal(id=null){
+  _editProduitId=id;_prodImgB64=null;
+  db=loadDB();
+  const p=id?(db.produits||[]).find(x=>x.id===id)||{}:{};
+  document.body.insertAdjacentHTML('beforeend',`
+  <div class="modal-overlay show" id="modalProduit" onclick="closeModalOut(event,'modalProduit')">
+    <div class="modal-box">
+      <div class="modal-drag"></div>
+      <div class="modal-title">Produit</div>
+      <div class="fg"><label>Nom</label><input id="pr_name" value="${p.name||''}" placeholder="Ex: Mixx by Yas"></div>
+      <div class="fg"><label>Abréviation (max 4)</label><input id="pr_abbr" value="${p.abbr||''}" maxlength="4" placeholder="Ex: MY"></div>
+      <div class="fg"><label>Catégorie</label>
+        <select id="pr_cat">
+          <option value="mobile_money" ${(p.cat||'mobile_money')==='mobile_money'?'selected':''}>Mobile Money</option>
+          <option value="transfert" ${p.cat==='transfert'?'selected':''}>Transfert International</option>
+          <option value="credit" ${p.cat==='credit'?'selected':''}>Crédit</option>
+        </select>
+      </div>
+      <div class="fg"><label>Couleur</label><input type="color" id="pr_color" value="${p.color||'#ffb300'}"></div>
+      <label for="pr_img" style="display:inline-flex;align-items:center;gap:8px;margin-top:8px;padding:10px 16px;background:rgba(240,185,11,.08);border:1px solid rgba(240,185,11,.3);border-radius:8px;cursor:pointer;font-size:13px;color:var(--gold);font-weight:600">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        Choisir une image
+      </label>
+      <input type="file" id="pr_img" accept="image/*" style="display:none" onchange="previewProdImg(this)">
+      <div id="pr_img_prev" style="margin-top:8px">${(db.produitImgs||{})[id]?`<img src="${(db.produitImgs||{})[id]}" style="width:50px;height:50px;border-radius:8px;object-fit:contain">`:''}</div>
+      <button onclick="saveProduit()" class="btn btn-red btn-full mt-10">Enregistrer</button>
+      <button onclick="closeModal('modalProduit')" class="btn btn-outline btn-full mt-10">Annuler</button>
+    </div>
+  </div>`);
+}
+
+function previewProdImg(input){
+  const file=input.files[0];if(!file)return;
+  const r=new FileReader();
+  r.onload=e=>{
+    _prodImgB64=e.target.result;
+    const prev=document.getElementById('pr_img_prev');
+    if(prev)prev.innerHTML=`<img src="${_prodImgB64}" style="width:50px;height:50px;border-radius:8px;object-fit:contain">`;
+  };
+  r.readAsDataURL(file);
+}
+
+function saveProduit(){
+  const name=(document.getElementById('pr_name')?.value||'').trim();
+  const abbr=(document.getElementById('pr_abbr')?.value||'').trim().toUpperCase();
+  const cat=document.getElementById('pr_cat')?.value||'mobile_money';
+  const color=document.getElementById('pr_color')?.value||'#ffb300';
+  if(!name){showToast('Nom obligatoire','error');return;}
+  db=loadDB();
+  db.produitImgs=db.produitImgs||{};
+  if(_editProduitId){
+    const p=db.produits.find(x=>x.id===_editProduitId);
+    if(p){p.name=name;p.abbr=abbr;p.cat=cat;p.color=color;}
+    if(_prodImgB64)db.produitImgs[_editProduitId]=_prodImgB64;
+  } else {
+    const id=uid();
+    db.produits.push({id,name,abbr,cat,color,active:true});
+    if(_prodImgB64)db.produitImgs[id]=_prodImgB64;
+  }
+  saveDB();
+  closeModal('modalProduit');
+  showToast('Produit enregistré','success');
+  RENDERS['produits']();
+}
+
+function toggleProduit(id){
+  db=loadDB();
+  const p=(db.produits||[]).find(x=>x.id===id);
+  if(!p)return;
+  p.active=!p.active;
+  saveDB();
+  RENDERS['produits']();
+}
+
+// ============================================================
+// LIQUIDITÉS
+// ============================================================
+function openModalLiq(){
+  db=loadDB();
+  const isAdmin=currentUser?.role==='admin'||currentUser?.role==='superviseur';
+  const agences=isAdmin?db.agences.filter(a=>a.active):[db.agences.find(a=>a.id===currentUser?.agenceId)].filter(Boolean);
+  const mobProds=(db.produits||[]).filter(p=>p.active&&p.cat==='mobile_money');
+  const creditProds=(db.produits||[]).filter(p=>p.active&&p.cat==='credit');
+  document.body.insertAdjacentHTML('beforeend',`
+  <div class="modal-overlay show" id="modalLiq" onclick="closeModalOut(event,'modalLiq')">
+    <div class="modal-box" style="max-height:85vh;overflow-y:auto">
+      <div class="modal-drag"></div>
+      <div class="modal-title">Définir les liquidités</div>
+      <div class="fg"><label>Agence</label>
+        <select id="liq_agence" onchange="updateLiqForm()">
+          ${agences.map(a=>`<option value="${a.id}">${a.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>Espèces (FCFA)</label>
+        <input type="number" id="liq_montant" placeholder="Ex: 500000" inputmode="numeric">
+      </div>
+      <div id="liq_virtuel_fields">
+        ${mobProds.map(p=>`
+        <div class="fg"><label>${p.name} Virtuel (FCFA)</label>
+          <input type="number" id="liq_v_${p.id}" placeholder="Ex: 200000" inputmode="numeric">
+        </div>`).join('')}
+      </div>
+      <div id="liq_credit_fields">
+        ${creditProds.map(p=>`
+        <div class="fg"><label>Stock ${p.name} (FCFA)</label>
+          <input type="number" id="liq_c_${p.id}" placeholder="Ex: 100000" inputmode="numeric">
+        </div>`).join('')}
+      </div>
+      <div class="fg"><label>Commentaire (optionnel)</label>
+        <input id="liq_comment" placeholder="Ex: Réapprovisionnement">
+      </div>
+      <button onclick="saveLiquidite()" class="btn btn-red btn-full mt-10">Enregistrer</button>
+      <button onclick="closeModal('modalLiq')" class="btn btn-outline btn-full mt-10">Annuler</button>
+    </div>
+  </div>`);
+  updateLiqForm();
+}
+
+function updateLiqForm(){
+  db=loadDB();
+  const agId=document.getElementById('liq_agence')?.value;
+  const ag=db.agences.find(a=>a.id===agId);
+  if(!ag)return;
+  const montantEl=document.getElementById('liq_montant');
+  if(montantEl)montantEl.value=ag.liquidite||0;
+  (db.produits||[]).filter(p=>p.active&&p.cat==='mobile_money').forEach(p=>{
+    const el=document.getElementById('liq_v_'+p.id);
+    if(el)el.value=(ag.virtuel||{})[p.id]||0;
+  });
+  (db.produits||[]).filter(p=>p.active&&p.cat==='credit').forEach(p=>{
+    const el=document.getElementById('liq_c_'+p.id);
+    if(el)el.value=(ag.creditStock||{})[p.id]||0;
+  });
+}
+
+function saveLiquidite(){
+  if(!currentUser){showToast('Session expirée','error');return;}
+  db=loadDB();
+  const agId=document.getElementById('liq_agence')?.value;
+  const agIdx=db.agences.findIndex(a=>a.id===agId);
+  if(agIdx<0){showToast('Agence introuvable','error');return;}
+  const ag=db.agences[agIdx];
+  const rawLiq=(document.getElementById('liq_montant')?.value||'0').replace(/\s/g,'').replace(',','.');
+  const newLiq=Math.round(Number(rawLiq))||0;
+  const oldLiq=ag.liquidite||0;
+  const notifParts=[];
+  if(newLiq!==oldLiq){ag.liquidite=newLiq;notifParts.push('Espèces: '+fmtM(newLiq)+' FCFA');}
+  ag.virtuel=ag.virtuel||{};
+  ag.creditStock=ag.creditStock||{};
+  (db.produits||[]).filter(p=>p.active&&p.cat==='mobile_money').forEach(p=>{
+    const el=document.getElementById('liq_v_'+p.id);if(!el)return;
+    const rawV=(el.value||'0').replace(/\s/g,'').replace(',','.');
+    const newV=Math.round(Number(rawV))||0;
+    if(newV!==(ag.virtuel[p.id]||0)){ag.virtuel[p.id]=newV;notifParts.push(p.name+': '+fmtM(newV)+' FCFA');}
+  });
+  (db.produits||[]).filter(p=>p.active&&p.cat==='credit').forEach(p=>{
+    const el=document.getElementById('liq_c_'+p.id);if(!el)return;
+    const rawC=(el.value||'0').replace(/\s/g,'').replace(',','.');
+    const newC=Math.round(Number(rawC))||0;
+    if(newC!==(ag.creditStock[p.id]||0)){ag.creditStock[p.id]=newC;notifParts.push('Stock '+p.name+': '+fmtM(newC));}
+  });
+  const cmt=(document.getElementById('liq_comment')?.value||'').trim();
+  if(notifParts.length>0){
+    const msg='Liquidité mise à jour par '+currentUser.name+' — '+ag.name+' — '+notifParts.join(' · ')+(cmt?' — '+cmt:'');
+    (db.users||[]).filter(u=>u.agenceId===ag.id&&u.active).forEach(u=>addNotif(u.id,'liq_update',msg,''));
+    (db.users||[]).filter(u=>(u.role==='admin'||u.role==='superviseur')&&u.active).forEach(u=>addNotif(u.id,'liq_update',msg,''));
+  }
+  db.transactions.push({id:uid(),ts:new Date().toISOString(),type:'ajustement_liq',agenceId:ag.id,agentId:currentUser.id,agentName:currentUser.name,amount:newLiq,effect:1,desc:'Ajustement liquidités — '+ag.name,note:cmt,liqAfter:newLiq});
+  window._lastOpTime=Date.now();
+  saveDB();
+  closeModal('modalLiq');
+  showToast('Liquidités enregistrées !','success');
+  RENDERS['liquidite']();
+  if(RENDERS['dashboard'])try{RENDERS['dashboard']();}catch(e){}
+  updateBadges();
+}
+
+// ============================================================
+// SERVICES
+// ============================================================
+function addSvc(){
+  db=loadDB();db.services=db.services||[];
+  db.services.push({id:uid(),nom:'Nouveau service',prix:500,unite:'pièce',icon:'tool'});
+  saveDB();RENDERS['services']();
+}
+
+function addSvcRapide(icon,nom,prix,unite){
+  db=loadDB();db.services=db.services||[];
+  if(db.services.find(s=>s.nom===nom)){showToast('Service déjà ajouté','warning');return;}
+  db.services.push({id:uid(),nom,prix,unite,icon});
+  saveDB();RENDERS['services']();
+}
+
+function updateSvc(idx,field,value){
+  db=loadDB();db.services=db.services||[];
+  if(db.services[idx])db.services[idx][field]=field==='prix'?Number(value):value;
+  saveDB();
+}
+
+function deleteSvc(idx){
+  db=loadDB();db.services=db.services||[];
+  db.services.splice(idx,1);
+  saveDB();RENDERS['services']();
+}
+
+// ============================================================
+// MESSAGES / CHAT
+// ============================================================
+function openChat(userId){
+  db=loadDB();db.messages=db.messages||[];
+  const user=(db.users||[]).find(u=>u.id===userId);
+  if(!user)return;
+  const msgs=db.messages.filter(m=>(m.from===currentUser.id&&m.to===userId)||(m.from===userId&&m.to===currentUser.id));
+  msgs.filter(m=>m.to===currentUser.id&&!m.read).forEach(m=>m.read=true);
+  saveDB();
+  document.body.insertAdjacentHTML('beforeend',`
+  <div class="modal-overlay show" id="modalChat">
+    <div class="modal-box" style="max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-drag"></div>
+      <div class="modal-title">${user.name} <button onclick="closeModal('modalChat')" class="btn btn-ghost" style="padding:4px 8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <div id="chatMsgs" style="flex:1;overflow-y:auto;padding:8px 0;min-height:200px">
+        ${msgs.map(m=>`<div style="display:flex;justify-content:${m.from===currentUser.id?'flex-end':'flex-start'};margin-bottom:8px">
+          <div style="max-width:75%;padding:8px 12px;border-radius:12px;background:${m.from===currentUser.id?'var(--red)':'rgba(255,255,255,.08)'};font-size:13px">${m.text}
+          <div style="font-size:10px;opacity:.6;margin-top:2px">${fmtTime(m.ts)}</div></div></div>`).join('')||'<div style="text-align:center;color:var(--t3);font-size:12px;padding:20px">Commencer la conversation</div>'}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input id="chatInput" placeholder="Message..." style="flex:1;padding:10px;background:rgba(255,255,255,.05);border:1px solid var(--b2);border-radius:8px;color:var(--white);font-size:13px" onkeydown="if(event.key==='Enter')sendMsg('${userId}')">
+        <button onclick="sendMsg('${userId}')" class="btn btn-red" style="padding:10px 14px">Envoyer</button>
+      </div>
+    </div>
+  </div>`);
+  setTimeout(()=>{const el=document.getElementById('chatMsgs');if(el)el.scrollTop=el.scrollHeight;},100);
+}
+
+function sendMsg(toId){
+  const text=(document.getElementById('chatInput')?.value||'').trim();
+  if(!text)return;
+  db=loadDB();db.messages=db.messages||[];
+  db.messages.push({id:uid(),from:currentUser.id,to:toId,text,ts:new Date().toISOString(),read:false});
+  addNotif(toId,'message','Message de '+currentUser.name+': '+text.substring(0,50),'');
+  saveDB();
+  document.getElementById('chatInput').value='';
+  closeModal('modalChat');
+  openChat(toId);
+}
+
+// ============================================================
+// ALERTES
+// ============================================================
+function markAlerteVue(id){
+  db=loadDB();
+  const a=(db.alertes||[]).find(x=>x.id===id);
+  if(a){a.vue=true;saveDB();RENDERS['alertes']();}
+}
+
+// ============================================================
+// CORRECTION TRANSACTIONS
+// ============================================================
+function openCorrectTx(txId){
+  db=loadDB();
+  const t=db.transactions.find(x=>x.id===txId);
+  if(!t){showToast('Transaction introuvable','error');return;}
+  const prod=(db.produits||[]).find(p=>p.id===t.produitId);
+  const isTransfertIntl=prod&&prod.cat==='transfert';
+  document.body.insertAdjacentHTML('beforeend',`
+  <div class="modal-overlay show" id="modalCorrect">
+    <div class="modal-box">
+      <div class="modal-drag"></div>
+      <div class="modal-title">Corriger transaction</div>
+      <div class="card" style="margin-bottom:12px;background:rgba(255,255,255,.03)">
+        <div style="font-size:12px;color:var(--t3)">Transaction originale</div>
+        <div style="font-weight:700;margin-top:4px">${t.desc}</div>
+        <div style="font-size:13px;color:var(--gold)">${fmtM(t.amount)} FCFA · ${fmtDate(t.ts)}</div>
+        ${prod?`<div style="font-size:11px;color:var(--t3)">Produit: ${prod.name}</div>`:''}
+      </div>
+      <div class="fg"><label>Nouveau montant (FCFA)</label>
+        <input type="number" id="correctAmt" value="${t.amount}" style="font-size:18px;font-weight:700" inputmode="numeric">
+      </div>
+      <div class="fg"><label>Raison (obligatoire)</label>
+        <input id="correctNote" placeholder="Ex: Erreur de saisie">
+      </div>
+      <button onclick="appliquerCorrection('${txId}')" class="btn btn-red btn-full mt-10">Confirmer</button>
+      <button onclick="closeModal('modalCorrect')" class="btn btn-outline btn-full mt-10">Annuler</button>
+    </div>
+  </div>`);
+}
+
+function appliquerCorrection(txId){
+  db=loadDB();
+  const t=db.transactions.find(x=>x.id===txId);
+  if(!t){showToast('Transaction introuvable','error');return;}
+  const rawAmt=(document.getElementById('correctAmt')?.value||'0').replace(/\s/g,'');
+  const newAmt=Math.round(Number(rawAmt));
+  const note=(document.getElementById('correctNote')?.value||'').trim();
+  if(!newAmt||newAmt<=0){showToast('Montant invalide','error');return;}
+  if(!note){showToast('Raison obligatoire','error');return;}
+  const agIdx=db.agences.findIndex(a=>a.id===t.agenceId);
+  if(agIdx<0){showToast('Agence introuvable','error');return;}
+  const ag=db.agences[agIdx];
+  const prod=(db.produits||[]).find(p=>p.id===t.produitId);
+  const isTransfertIntl=prod&&prod.cat==='transfert';
+  const diff=newAmt-t.amount;const oldAmt=t.amount;
+  if(t.type==='retrait'){
+    ag.liquidite-=diff;
+    if(!isTransfertIntl&&t.produitId){ag.virtuel=ag.virtuel||{};ag.virtuel[t.produitId]=(ag.virtuel[t.produitId]||0)+diff;}
+  }else if(t.type==='depot'){
+    ag.liquidite+=diff;
+    if(!isTransfertIntl&&t.produitId){ag.virtuel=ag.virtuel||{};ag.virtuel[t.produitId]=(ag.virtuel[t.produitId]||0)-diff;}
+  }else if(t.type==='depense'){ag.liquidite+=diff;}
+  t.amount=newAmt;t.corrected=true;t.correctionBy=currentUser.name;t.correctionAt=new Date().toISOString();t.correctionNote=note+' ('+fmtM(oldAmt)+'→'+fmtM(newAmt)+' par '+currentUser.name+')';
+  db.transactions.push({id:uid(),ts:new Date().toISOString(),type:'correction',agenceId:ag.id,agentId:currentUser.id,amount:Math.abs(diff),effect:diff>=0?1:-1,desc:'CORRECTION: '+t.desc+' ('+fmtM(oldAmt)+'→'+fmtM(newAmt)+')',note,liqAfter:ag.liquidite});
+  addNotif(t.agentId,'tx_corrigee','Transaction corrigée: '+t.desc+' '+fmtM(oldAmt)+'→'+fmtM(newAmt)+' FCFA. Raison: '+note,'');
+  window._lastOpTime=Date.now();saveDB();
+  closeModal('modalCorrect');
+  showToast('Transaction corrigée','success');
+  if(RENDERS[currentPage])try{RENDERS[currentPage]();}catch(e){}
+}
+
+// ============================================================
+// PWA
+// ============================================================
+function showPwaModal(){
+  if(_deferredInstall||window._installEvent){
+    installFromModal();
+  } else {
+    showToast('Installation PWA non disponible sur ce navigateur','warning');
+  }
+}
+function installFromModal(){
+  const evt=_deferredInstall||window._installEvent;
+  if(!evt){showToast('Utilisez le menu du navigateur pour installer','info');return;}
+  evt.prompt();
+  evt.userChoice.then(r=>{if(r.outcome==='accepted')showToast('App installée !','success');});
+}
+function installPWA(){showPwaModal();}
+
+// ============================================================
+// AUTRES UTILS
+// ============================================================
+function updateConnStatus(){
+  const dot=document.getElementById('connDot');
+  const txt=document.getElementById('connTxt');
+  const online=navigator.onLine;
+  if(dot){dot.style.background=online?'#0ecb81':'#f6465d';}
+  if(txt){txt.textContent=online?'En ligne':'Hors ligne';txt.style.color=online?'#0ecb81':'#f6465d';}
+}
+
+function openChat2(userId){openChat(userId);}
+
+function openNotifPanel(){
+  db=loadDB();
+  const notifs=(db.notifications||[]).filter(n=>n.userId===currentUser.id).slice().reverse().slice(0,20);
+  notifs.forEach(n=>{if(!n.read){n.read=true;}});
+  db.notifications=(db.notifications||[]).map(n=>n.userId===currentUser.id?{...n,read:true}:n);
+  saveDB();updateNotifBadge();
+  document.body.insertAdjacentHTML('beforeend',`
+  <div class="modal-overlay show" id="modalNotif">
+    <div class="modal-box" style="max-height:80vh;overflow-y:auto">
+      <div class="modal-drag"></div>
+      <div class="modal-title">Notifications <button onclick="closeModal('modalNotif')" class="btn btn-ghost" style="padding:4px 8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      ${notifs.length===0?'<div class="empty-state"><p>Aucune notification</p></div>'
+      :notifs.map(n=>`<div style="padding:10px 0;border-bottom:1px solid var(--b2)">
+        <div style="font-size:12px;font-weight:600">${n.message||n.msg||''}</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:2px">${fmtDate(n.ts)}</div>
+      </div>`).join('')}
+    </div>
+  </div>`);
+}
+
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();_deferredInstall=e;window._installEvent=e;
+  const btn=document.getElementById('installBtn');
+  if(btn){btn.style.display='flex';btn.style.color='var(--gold)';}
+});
+
 // Pull to refresh
 (function(){
   let startY=0,pulling=false,ptr=null;
